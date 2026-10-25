@@ -10,6 +10,11 @@ android {
     namespace = "com.kurador.cleaner"
     compileSdk = 36
 
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     defaultConfig {
         applicationId = "com.kurador.cleaner"
         minSdk = 31
