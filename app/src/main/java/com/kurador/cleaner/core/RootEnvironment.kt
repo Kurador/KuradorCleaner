@@ -14,8 +14,10 @@ data class RootInfo(
 
 object RootEnvironment {
     suspend fun detect(): RootInfo = withContext(Dispatchers.IO) {
-        val rootGranted = Shell.isAppGrantedRoot() == true
-        if (!rootGranted) {
+        // Abrir la shell primero: aquí es donde KernelSU/Magisk pide el permiso
+        val shell = runCatching { Shell.getShell() }.getOrNull()
+        val granted = shell != null && shell.isRoot
+        if (!granted) {
             return@withContext RootInfo(false, RootProvider.NONE, emptyList())
         }
 
