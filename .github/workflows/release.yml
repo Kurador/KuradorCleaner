@@ -1,0 +1,111 @@
+name: Build and Publish APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Decode keystore
+        run: |
+          printf '%s' "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/release-keystore.jks"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/release-keystore.jks" >> "$GITHUB_ENV"
+
+      - name: Build release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease
+
+      - name: Publish APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true
+echo "release-keystore.jks" >> .gitignore
+echo "key.properties" >> .gitignore
+keytool -genkeypair -v \
+  -keystore release-keystore.jks \
+  -alias kurador_key \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass TU_PASSWORD -keypass TU_PASSWORD \
+  -dname "CN=Kurador, OU=Android, O=Kurador, L=Local, ST=Local, C=ES"
+base64 -w 0 release-keystore.jks > keystore_b64.txt
+gh secret set ANDROID_KEYSTORE_BASE64 < keystore_b64.txt
+rm keystore_b64.txt
+
+gh secret set KEYSTORE_PASSWORD      # te pide el valor, escribe TU_PASSWORD
+gh secret set KEY_ALIAS --body "kurador_key"
+gh secret set KEY_PASSWORD           # TU_PASSWORD
+
+rm .github/workflows/release.yml
+nano .github/workflows/release.ym
+
+name: Build and Publish APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Decode keystore
+        run: |
+          printf '%s' "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/release-keystore.jks"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/release-keystore.jks" >> "$GITHUB_ENV"
+
+      - name: Build release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease
+
+      - name: Publish APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true
