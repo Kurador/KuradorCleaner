@@ -8,14 +8,11 @@ enum class CleanModule(
     val description: String,
     val risky: Boolean = false
 ) {
-    EMPTY_DIRS("empty_dirs", "Carpetas vacías", "Directorios huérfanos"),
-    APP_CACHE("app_cache", "Caché apps", "Caché interno y externo"),
-    DALVIK("dalvik", "Dalvik / ART", "Dalvik-cache", true),
-    JUNK("junk", "Basura", "Logs, tmp y thumbnails"),
-    FSTRIM("fstrim", "FSTRIM", "Reciclaje de espacio libre"),
-    TEMP_FILES("temp_files", "Temp / logs", "Archivos temporales"),
-    APK_DUPES("apk_dupes", "APK duplicados", "Detecta APK repetidos"),
-    THUMB_CACHE("thumb_cache", "Miniaturas", "Caché de thumbnails")
+    EMPTY_DIRS("empty_dirs", "Carpetas vacías", "Carpetas vacías en /sdcard (excepto Android)"),
+    APP_CACHE("app_cache", "Caché de la app", "Caché propia de Kurador Lite"),
+    JUNK("junk", "Archivos .tmp", "Archivos .tmp de más de 1 día"),
+    THUMB_CACHE("thumb_cache", "Miniaturas", "Miniaturas de la galería"),
+    APK_DUPES("apk_dupes", "APK duplicados", "Solo detecta, no borra")
 }
 
 data class LogEntry(

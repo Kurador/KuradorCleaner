@@ -1,8 +1,12 @@
 package com.kurador.cleaner.engine
 
-import com.kurador.cleaner.core.ShellManager
+import java.io.File
+import java.security.MessageDigest
 
-class CleanerEngine(private val shell: ShellManager = ShellManager) {
+class CleanerEngine(private val appCacheDirs: List<File>) {
+
+    private val sdcard = File("/sdcard")
+    private val androidDir = File("/sdcard/Android")
 
     suspend fun runModules(modules: Set<CleanModule>) {
         val ordered = CleanModule.entries.filter { it in modules }
@@ -19,12 +23,9 @@ class CleanerEngine(private val shell: ShellManager = ShellManager) {
                 when (module) {
                     CleanModule.EMPTY_DIRS -> cleanEmptyDirs()
                     CleanModule.APP_CACHE -> cleanAppCache()
-                    CleanModule.DALVIK -> cleanDalvik()
-                    CleanModule.JUNK -> cleanJunk()
-                    CleanModule.FSTRIM -> runFstrim()
-                    CleanModule.TEMP_FILES -> cleanTempFiles()
-                    CleanModule.APK_DUPES -> cleanApkDuplicates()
+                    CleanModule.JUNK -> cleanTmpFiles()
                     CleanModule.THUMB_CACHE -> cleanThumbnails()
+                    CleanModule.APK_DUPES -> findApkDuplicates()
                 }
             }.getOrElse { e ->
                 CleanBus.log("Error en ${module.title}: ${e.message}", LogEntry.Level.ERROR)
@@ -32,79 +33,104 @@ class CleanerEngine(private val shell: ShellManager = ShellManager) {
             }
 
             CleanBus.addResult(result)
-            CleanBus.log("${module.title} → liberado: ${formatBytes(result.freedBytes)}", LogEntry.Level.SUCCESS)
+            CleanBus.log("${module.title} → ${result.detail}", LogEntry.Level.SUCCESS)
             CleanBus.setProgress((index + 1) / ordered.size.toFloat())
         }
 
         CleanBus.setCurrentModule(null)
     }
 
-    private suspend fun cleanEmptyDirs(): ModuleResult {
-        val base = "find /sdcard -mindepth 1 -depth -type d -empty -not -path '/sdcard/Android*' 2>/dev/null"
-        val count = shell.exec("$base | wc -l").out.firstOrNull()?.trim()?.toIntOrNull() ?: 0
-        if (count == 0) return ModuleResult(CleanModule.EMPTY_DIRS, 0L, "Sin carpetas vacías")
-        shell.exec("$base -exec rmdir {} + 2>/dev/null")
-        return ModuleResult(CleanModule.EMPTY_DIRS, count * 4096L, "$count carpetas eliminadas")
+    private fun isInAndroidDir(f: File): Boolean = f.path.startsWith(androidDir.path)
+
+    private fun dirSize(f: File): Long = when {
+        !f.exists() -> 0L
+        f.isFile -> f.length()
+        else -> f.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
-    private suspend fun cleanAppCache(): ModuleResult {
-        val globs = "/data/user/0/*/cache /data/user_de/0/*/cache /sdcard/Android/data/*/cache"
-        val before = ShellManager.parseDuKb(shell.exec("du -sk $globs 2>/dev/null"))
-        shell.exec("for c in $globs; do [ -d \"\$c\" ] && rm -rf \"\$c\"/* 2>/dev/null; done")
-        shell.exec("pm trim-caches 999999999999 2>/dev/null")
-        return ModuleResult(CleanModule.APP_CACHE, before, "Caché interno + externo purgado")
+    private fun cleanEmptyDirs(): ModuleResult {
+        var count = 0
+        sdcard.walkBottomUp()
+            .filter { it.isDirectory && it != sdcard && !isInAndroidDir(it) }
+            .forEach { dir ->
+                if (dir.listFiles()?.isEmpty() == true && dir.delete()) count++
+            }
+        return ModuleResult(CleanModule.EMPTY_DIRS, 0L, "$count carpetas vacías eliminadas")
     }
 
-    private suspend fun cleanDalvik(): ModuleResult {
-        val before = ShellManager.parseDuKb(shell.exec("du -sk /data/dalvik-cache /cache/dalvik-cache 2>/dev/null"))
-        shell.exec("rm -rf /data/dalvik-cache/* /cache/dalvik-cache/* 2>/dev/null")
-        return ModuleResult(CleanModule.DALVIK, before, "Recompilación ART diferida")
-    }
-
-    private suspend fun cleanJunk(): ModuleResult {
-        val paths = "/data/log /data/tombstones /data/anr /data/system/dropbox /data/vendor/log /data/vendor/tombstones"
-        var freed = ShellManager.parseDuKb(shell.exec("du -sk $paths 2>/dev/null"))
-        shell.exec("for p in $paths; do [ -d \"\$p\" ] && rm -rf \"\$p\"/* 2>/dev/null; done")
-
-        freed += ShellManager.parseDuKb(
-            shell.exec("du -sk /sdcard/DCIM/.thumbnails /sdcard/Pictures/.thumbnails 2>/dev/null")
-        )
-        val tmpCount = shell.exec(
-            "find /sdcard -type f -name '*.tmp' -mtime +0 -not -path '*/Android/*' 2>/dev/null | wc -l"
-        ).out.firstOrNull()?.trim()?.toIntOrNull() ?: 0
-        shell.exec("find /sdcard -type f -name '*.tmp' -mtime +0 -not -path '*/Android/*' -delete 2>/dev/null")
-
-        return ModuleResult(CleanModule.JUNK, freed, "Logs y miniaturas purgados; $tmpCount tmp eliminados")
-    }
-
-    private suspend fun runFstrim(): ModuleResult {
-        var total = 0L
-        for (target in listOf("/data", "/cache", "/system", "/vendor", "/metadata")) {
-            val output = shell.exec("fstrim -v $target 2>&1").combinedOutput
-            val match = Regex("""([\d,]+)\s+bytes trimmed""").find(output)
-            total += match?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull() ?: 0L
+    private fun cleanAppCache(): ModuleResult {
+        var freed = 0L
+        appCacheDirs.forEach { dir ->
+            freed += dirSize(dir)
+            dir.listFiles()?.forEach { it.deleteRecursively() }
         }
-        return ModuleResult(CleanModule.FSTRIM, total, "Celdas UFS recicladas")
+        return ModuleResult(CleanModule.APP_CACHE, freed, "Caché propia borrada")
     }
 
-    private suspend fun cleanTempFiles(): ModuleResult {
-        val before = ShellManager.parseDuKb(shell.exec("du -sk /data/local/tmp 2>/dev/null"))
-        shell.exec("rm -rf /data/local/tmp/* 2>/dev/null")
-        return ModuleResult(CleanModule.TEMP_FILES, before, "Directorios temporales vaciados")
+    private fun cleanTmpFiles(): ModuleResult {
+        val cutoff = System.currentTimeMillis() - 24L * 60 * 60 * 1000
+        var freed = 0L
+        var count = 0
+        sdcard.walkTopDown()
+            .onEnter { !isInAndroidDir(it) }
+            .filter { it.isFile && it.name.endsWith(".tmp", ignoreCase = true) && it.lastModified() < cutoff }
+            .forEach { f ->
+                val size = f.length()
+                if (f.delete()) {
+                    freed += size
+                    count++
+                }
+            }
+        return ModuleResult(CleanModule.JUNK, freed, "$count archivos .tmp eliminados")
     }
 
-    private suspend fun cleanApkDuplicates(): ModuleResult {
-        val cmd = "find /sdcard -type f -iname '*.apk' 2>/dev/null | while read -r f; do " +
-            "sha256sum \"\$f\" 2>/dev/null | awk '{print \$1}'; done | sort | uniq -d | wc -l"
-        val count = shell.exec(cmd).out.firstOrNull()?.trim()?.toIntOrNull() ?: 0
-        return ModuleResult(CleanModule.APK_DUPES, 0L, "Grupos de APK duplicados: $count")
+    private fun cleanThumbnails(): ModuleResult {
+        val dirs = listOf(File(sdcard, "DCIM/.thumbnails"), File(sdcard, "Pictures/.thumbnails"))
+        var freed = 0L
+        dirs.forEach { d ->
+            freed += dirSize(d)
+            d.deleteRecursively()
+        }
+        return ModuleResult(CleanModule.THUMB_CACHE, freed, "Miniaturas eliminadas")
     }
 
-    private suspend fun cleanThumbnails(): ModuleResult {
-        val before = ShellManager.parseDuKb(
-            shell.exec("du -sk /sdcard/DCIM/.thumbnails /sdcard/Pictures/.thumbnails 2>/dev/null")
+    private fun findApkDuplicates(): ModuleResult {
+        val apks = sdcard.walkTopDown()
+            .onEnter { !isInAndroidDir(it) }
+            .filter { it.isFile && it.name.endsWith(".apk", ignoreCase = true) }
+            .toList()
+
+        var groupsFound = 0
+        var reclaimable = 0L
+        apks.groupBy { it.length() }
+            .filterValues { it.size > 1 }
+            .values
+            .forEach { sameSize ->
+                sameSize.groupBy { sha256(it) }
+                    .values
+                    .filter { it.size > 1 }
+                    .forEach { dupes ->
+                        groupsFound++
+                        reclaimable += dupes.drop(1).sumOf { it.length() }
+                    }
+            }
+        return ModuleResult(
+            CleanModule.APK_DUPES,
+            0L,
+            "$groupsFound grupos duplicados, ${formatBytes(reclaimable)} recuperables (no borrado)"
         )
-        shell.exec("rm -rf /sdcard/DCIM/.thumbnails /sdcard/Pictures/.thumbnails 2>/dev/null")
-        return ModuleResult(CleanModule.THUMB_CACHE, before, "Miniaturas purgadas")
+    }
+
+    private fun sha256(f: File): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { input ->
+            val buf = ByteArray(8192)
+            var n = input.read(buf)
+            while (n > 0) {
+                md.update(buf, 0, n)
+                n = input.read(buf)
+            }
+        }
+        return md.digest().joinToString("") { String.format("%02x", it.toInt() and 0xff) }
     }
 }

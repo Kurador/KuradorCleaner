@@ -4,8 +4,6 @@ import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.kurador.cleaner.core.RootEnvironment
-import com.kurador.cleaner.core.RootProvider
 import com.kurador.cleaner.engine.CleanBus
 import com.kurador.cleaner.engine.CleanModule
 import com.kurador.cleaner.engine.LogEntry
@@ -19,8 +17,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class DashboardUiState(
-    val rootGranted: Boolean? = null,
-    val rootProvider: RootProvider = RootProvider.NONE,
     val running: Boolean = false,
     val progress: Float = 0f,
     val currentModule: String? = null,
@@ -35,7 +31,6 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
     init {
-        refreshRootStatus()
         bind(CleanBus.running) { copy(running = it) }
         bind(CleanBus.progress) { copy(progress = it) }
         bind(CleanBus.currentModule) { copy(currentModule = it) }
@@ -50,11 +45,6 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun refreshRootStatus() = viewModelScope.launch {
-        val info = RootEnvironment.detect()
-        _uiState.update { it.copy(rootGranted = info.granted, rootProvider = info.provider) }
-    }
-
     fun toggleModule(module: CleanModule) = _uiState.update { state ->
         state.copy(
             enabledModules = if (module in state.enabledModules)
@@ -67,12 +57,8 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     fun startExpressClean() {
         val state = _uiState.value
         if (state.running) return
-        if (state.rootGranted != true) {
-            refreshRootStatus()
-            return
-        }
         CleanBus.reset()
-        CleanBus.log("Iniciando limpieza express", LogEntry.Level.CMD)
+        CleanBus.log("Iniciando limpieza", LogEntry.Level.CMD)
         val context = getApplication<Application>()
         val intent = Intent(context, CleanService::class.java).putExtra(
             CleanService.EXTRA_MODULES,

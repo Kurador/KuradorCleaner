@@ -16,7 +16,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.kurador.cleaner"
+        applicationId = "com.kurador.cleaner.lite"
         minSdk = 31
         targetSdk = 36
         versionCode = 1

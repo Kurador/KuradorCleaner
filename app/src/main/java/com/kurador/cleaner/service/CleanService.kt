@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 
 class CleanService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val engine = CleanerEngine()
+    private val engine by lazy { CleanerEngine(listOfNotNull(cacheDir, externalCacheDir)) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
